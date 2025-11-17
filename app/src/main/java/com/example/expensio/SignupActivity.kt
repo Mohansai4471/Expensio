@@ -1,6 +1,9 @@
 package com.example.expensio
 
+import android.content.Intent
 import android.os.Bundle
+import android.util.Patterns
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -29,31 +32,55 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expensio.ui.theme.ExpensioTheme
-import android.util.Patterns
+import com.google.firebase.auth.FirebaseAuth
 
 class SignupActivity : ComponentActivity() {
+
+    private lateinit var auth: FirebaseAuth
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        auth = FirebaseAuth.getInstance()
+
         enableEdgeToEdge()
         setContent {
             ExpensioTheme {
                 SignupScreen(
                     onCreateAccount = { name, email, password ->
-                        // TODO: Hook up real signup (e.g., FirebaseAuth.createUserWithEmailAndPassword)
-                        // and navigate to your HomeActivity on success.
-                        // startActivity(Intent(this, HomeActivity::class.java))
-                        // finish()
+                        createAccount(email, password)
                     },
                     onHaveAccount = {
-                        // TODO: Navigate back to SigninActivity
-                        // startActivity(Intent(this, SigninActivity::class.java))
-                        // finish()
+                        startActivity(Intent(this, SigninActivity::class.java))
+                        finish()
                     }
                 )
             }
         }
     }
+
+    private fun createAccount(email: String, password: String) {
+
+        auth.createUserWithEmailAndPassword(email, password)
+            .addOnCompleteListener(this) { task ->
+
+                if (task.isSuccessful) {
+                    Toast.makeText(this, "Account Created!", Toast.LENGTH_SHORT).show()
+                    startActivity(Intent(this, HomeActivity::class.java))
+                    finish()
+
+                } else {
+                    Toast.makeText(
+                        this,
+                        task.exception?.message ?: "Signup failed",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+    }
 }
+
+// ------------------------------ UI CODE (UNCHANGED) ------------------------------
 
 @Composable
 fun SignupScreen(

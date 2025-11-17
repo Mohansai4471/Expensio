@@ -3,6 +3,7 @@ package com.example.expensio
 import android.content.Intent
 import android.os.Bundle
 import android.util.Patterns
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -31,33 +32,64 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expensio.ui.theme.ExpensioTheme
-import kotlinx.coroutines.delay
+import com.google.firebase.auth.FirebaseAuth
 
 class SigninActivity : ComponentActivity() {
+
+    private lateinit var auth: FirebaseAuth
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        auth = FirebaseAuth.getInstance()
+
         enableEdgeToEdge()
         setContent {
             ExpensioTheme {
+
                 SigninScreen(
                     onSignIn = { email, password ->
-                        // TODO: Replace with real auth (e.g., FirebaseAuth)
-                        // For now just simulate success and go to HomeActivity
-                        // startActivity(Intent(this, HomeActivity::class.java))
-                        // finish()
+                        loginUser(email, password)
                     },
                     onCreateAccount = {
-                        // TODO: Navigate to your SignupActivity
-                        // startActivity(Intent(this, SignupActivity::class.java))
+                        startActivity(Intent(this, SignupActivity::class.java))
+                        finish()
                     },
                     onForgotPassword = {
-                        // TODO: Navigate to ForgotPasswordActivity or show dialog
+                        val email = auth.currentUser?.email ?: ""
+                        if (email.isNotEmpty())
+                            auth.sendPasswordResetEmail(email)
+                        Toast.makeText(this, "Password reset link sent (if email exists).", Toast.LENGTH_LONG).show()
                     }
                 )
             }
         }
     }
+
+    private fun loginUser(email: String, password: String) {
+
+        auth.signInWithEmailAndPassword(email, password)
+            .addOnCompleteListener(this) { task ->
+
+                if (task.isSuccessful) {
+                    Toast.makeText(this, "Signed in successfully!", Toast.LENGTH_SHORT).show()
+                    startActivity(Intent(this, HomeActivity::class.java))
+                    finish()
+
+                } else {
+                    Toast.makeText(
+                        this,
+                        task.exception?.message ?: "Login failed",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+    }
 }
+
+
+
+// ---------------- UI (unchanged except firebase callbacks) ---------------- //
 
 @Composable
 fun SigninScreen(
@@ -92,7 +124,7 @@ fun SigninScreen(
                 .align(Alignment.Center),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Title + tagline
+
             Text(
                 text = "Expensio",
                 color = Color.White,
@@ -109,7 +141,6 @@ fun SigninScreen(
 
             Spacer(Modifier.height(24.dp))
 
-            // Card container
             Card(
                 colors = CardDefaults.cardColors(containerColor = Color.White),
                 shape = RoundedCornerShape(20.dp),
@@ -117,6 +148,7 @@ fun SigninScreen(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(16.dp)) {
+
                     OutlinedTextField(
                         value = email,
                         onValueChange = {
@@ -133,12 +165,9 @@ fun SigninScreen(
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
+
                     if (emailError != null) {
-                        Text(
-                            text = emailError!!,
-                            color = MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp
-                        )
+                        Text(emailError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     }
 
                     Spacer(Modifier.height(12.dp))
@@ -184,12 +213,9 @@ fun SigninScreen(
                         ),
                         modifier = Modifier.fillMaxWidth()
                     )
+
                     if (passwordError != null) {
-                        Text(
-                            text = passwordError!!,
-                            color = MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp
-                        )
+                        Text(passwordError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     }
 
                     Spacer(Modifier.height(8.dp))
@@ -221,18 +247,19 @@ fun SigninScreen(
                             )
                         },
                         enabled = !submitting,
+                        shape = RoundedCornerShape(12.dp),
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(48.dp),
-                        shape = RoundedCornerShape(12.dp)
+                            .height(48.dp)
                     ) {
+
                         AnimatedVisibility(visible = !submitting, enter = fadeIn(), exit = fadeOut()) {
                             Text("Sign In")
                         }
                         AnimatedVisibility(visible = submitting, enter = fadeIn(), exit = fadeOut()) {
                             CircularProgressIndicator(
-                                strokeWidth = 2.dp,
                                 modifier = Modifier.size(22.dp),
+                                strokeWidth = 2.dp,
                                 color = Color.White
                             )
                         }
@@ -240,11 +267,7 @@ fun SigninScreen(
 
                     if (formError != null) {
                         Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = formError!!,
-                            color = MaterialTheme.colorScheme.error,
-                            fontSize = 12.sp
-                        )
+                        Text(formError!!, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
                     }
 
                     Spacer(Modifier.height(12.dp))
@@ -253,7 +276,7 @@ fun SigninScreen(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center
                     ) {
-                        Text(text = "New here?")
+                        Text("New here?")
                         Spacer(Modifier.width(6.dp))
                         Text(
                             text = "Create account",
@@ -283,19 +306,17 @@ private fun validateAndSubmit(
         setEmailError("Enter a valid email address.")
         valid = false
     }
+
     if (password.length < 6) {
-        setPasswordError("Password must be at least 6 characters.")
+        setPasswordError("Minimum 6 characters.")
         valid = false
     }
 
     if (!valid) return
 
     setSubmitting(true)
-    // Simulate a quick sign-in; replace with real auth call
-    // You can use coroutines in a ViewModel; kept simple here
-    // (No blocking on main thread)
     setFormError(null)
-    // Pretend success
+
     onSignIn(email.trim(), password)
     setSubmitting(false)
 }
