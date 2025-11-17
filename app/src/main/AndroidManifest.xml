@@ -29,6 +29,8 @@
             android:theme="@style/Theme.Expensio"/>
         <activity
             android:name=".SignupActivity"/>
+        <activity
+            android:name=".HomeActivity"/>
     </application>
 
 </manifest>
