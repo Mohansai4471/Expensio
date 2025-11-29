@@ -2,6 +2,7 @@ package com.example.expensio
 
 import android.content.Intent
 import android.os.Bundle
+import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -22,7 +23,14 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.expensio.ui.theme.ExpensioTheme
+import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.ListenerRegistration
+import com.google.firebase.firestore.Query
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class HomeActivity : ComponentActivity() {
 
@@ -32,13 +40,16 @@ class HomeActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
 
         auth = FirebaseAuth.getInstance()
-        val userEmail = auth.currentUser?.email ?: "Guest"
+        val user = auth.currentUser
+        val userEmail = user?.email ?: "Guest"
+        val userId = user?.uid ?: "guest" // used to filter Firestore docs
 
         enableEdgeToEdge()
         setContent {
             ExpensioTheme {
                 HomeScreen(
                     userEmail = userEmail,
+                    userId = userId,
                     onLogout = {
                         auth.signOut()
                         Toast.makeText(this, "Logged out", Toast.LENGTH_SHORT).show()
@@ -46,24 +57,36 @@ class HomeActivity : ComponentActivity() {
                         finish()
                     },
                     onAddExpense = {
-                        // TODO: create AddExpenseActivity and uncomment this
-                        // startActivity(Intent(this, AddExpenseActivity::class.java))
-                        Toast.makeText(this, "Add Expense screen (coming soon)", Toast.LENGTH_SHORT).show()
+                        // TODO: create AddExpenseActivity and navigate here
+                        Toast.makeText(
+                            this,
+                            "Add Expense screen (coming soon)",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     onOpenAnalytics = {
                         // TODO: create AnalyticsActivity
-                        // startActivity(Intent(this, AnalyticsActivity::class.java))
-                        Toast.makeText(this, "Analytics screen (coming soon)", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            this,
+                            "Analytics screen (coming soon)",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     onOpenHistory = {
                         // TODO: create HistoryActivity
-                        // startActivity(Intent(this, HistoryActivity::class.java))
-                        Toast.makeText(this, "History screen (coming soon)", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            this,
+                            "History screen (coming soon)",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     },
                     onOpenSettings = {
                         // TODO: create SettingsActivity
-                        // startActivity(Intent(this, SettingsActivity::class.java))
-                        Toast.makeText(this, "Settings screen (coming soon)", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(
+                            this,
+                            "Settings screen (coming soon)",
+                            Toast.LENGTH_SHORT
+                        ).show()
                     }
                 )
             }
@@ -77,6 +100,7 @@ class HomeActivity : ComponentActivity() {
 @Composable
 fun HomeScreen(
     userEmail: String,
+    userId: String,
     onLogout: () -> Unit,
     onAddExpense: () -> Unit,
     onOpenAnalytics: () -> Unit,
@@ -87,12 +111,71 @@ fun HomeScreen(
         listOf(Color(0xFF0077B6), Color(0xFF00BFA6))
     )
 
-    // Sample data – replace later with Room DB queries
-    val expenses = remember { sampleExpenses() }
+    // ---------------- Firestore State ----------------
+    var expenses by remember { mutableStateOf<List<ExpenseItem>>(emptyList()) }
+    var isLoading by remember { mutableStateOf(true) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    val db = remember { FirebaseFirestore.getInstance() }
+
+    // Listen to Firestore changes for this user
+    DisposableEffect(userId) {
+        if (userId == "guest") {
+            // No logged in user – show empty list
+            expenses = emptyList()
+            isLoading = false
+            errorMessage = "Please sign in to see your expenses."
+            onDispose { /* nothing */ }
+        } else {
+            val query = db.collection("expenses")
+                .whereEqualTo("userId", userId)
+                .orderBy("timestamp", Query.Direction.DESCENDING)
+
+            val registration: ListenerRegistration = query.addSnapshotListener { snapshot, e ->
+                if (e != null) {
+                    errorMessage = e.message ?: "Error loading expenses."
+                    isLoading = false
+                    return@addSnapshotListener
+                }
+
+                if (snapshot != null) {
+                    val list = snapshot.documents.mapNotNull { doc ->
+                        val title = doc.getString("title") ?: return@mapNotNull null
+                        val category = doc.getString("category") ?: "General"
+                        val amount = doc.getDouble("amount") ?: 0.0
+                        val ts = doc.getTimestamp("timestamp") ?: Timestamp.now()
+                        val date = ts.toDate()
+                        val isToday = DateUtils.isToday(date.time)
+                        val label = formatDateLabel(date)
+
+                        ExpenseItem(
+                            id = doc.id,
+                            title = title,
+                            category = category,
+                            amount = amount,
+                            dateLabel = label,
+                            isToday = isToday
+                        )
+                    }
+                    expenses = list
+                    isLoading = false
+                    errorMessage = null
+                } else {
+                    expenses = emptyList()
+                    isLoading = false
+                }
+            }
+
+            onDispose {
+                registration.remove()
+            }
+        }
+    }
+
+    // Totals
     val todayTotal = expenses.filter { it.isToday }.sumOf { it.amount }
-    val weekTotal = expenses.sumOf { it.amount }       // fake: all = this week
-    val monthTotal = expenses.sumOf { it.amount } * 2  // fake: just to show a bigger number
+    val weekTotal = expenses.sumOf { it.amount }       // (you can refine to “this week” later)
+    val monthTotal = expenses.sumOf { it.amount } * 2  // demo value – change to real logic later
 
     Scaffold(
         topBar = {
@@ -175,27 +258,63 @@ fun HomeScreen(
                     shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxSize()
                 ) {
-                    if (expenses.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Text(
-                                text = "No expenses yet.\nTap + to add your first one!",
-                                textAlign = TextAlign.Center
-                            )
+                    when {
+                        isLoading -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Column(
+                                    horizontalAlignment = Alignment.CenterHorizontally
+                                ) {
+                                    CircularProgressIndicator()
+                                    Spacer(Modifier.height(8.dp))
+                                    Text("Loading expenses...")
+                                }
+                            }
                         }
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .padding(12.dp)
-                        ) {
-                            items(expenses) { expense ->
-                                ExpenseRow(expense)
-                                Divider()
+
+                        errorMessage != null -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = errorMessage ?: "Something went wrong.",
+                                    textAlign = TextAlign.Center,
+                                    color = Color.Red
+                                )
+                            }
+                        }
+
+                        expenses.isEmpty() -> {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "No expenses yet.\nTap + to add your first one!",
+                                    textAlign = TextAlign.Center
+                                )
+                            }
+                        }
+
+                        else -> {
+                            LazyColumn(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(12.dp)
+                            ) {
+                                items(expenses) { expense ->
+                                    ExpenseRow(expense)
+                                    Divider()
+                                }
                             }
                         }
                     }
@@ -245,7 +364,6 @@ private fun SummaryCard(
         }
     }
 }
-
 
 @Composable
 private fun ExpenseRow(expense: ExpenseItem) {
@@ -306,10 +424,10 @@ private fun BottomNavBar(
     }
 }
 
-// ---------------------------- SAMPLE DATA ---------------------------- //
+// ---------------------------- DATA MODEL ---------------------------- //
 
 data class ExpenseItem(
-    val id: Int,
+    val id: String,
     val title: String,
     val category: String,
     val amount: Double,
@@ -317,39 +435,9 @@ data class ExpenseItem(
     val isToday: Boolean
 )
 
-private fun sampleExpenses(): List<ExpenseItem> {
-    return listOf(
-        ExpenseItem(
-            id = 1,
-            title = "Coffee",
-            category = "Food & Drink",
-            amount = 3.50,
-            dateLabel = "Today · 9:10 AM",
-            isToday = true
-        ),
-        ExpenseItem(
-            id = 2,
-            title = "Bus Ticket",
-            category = "Transport",
-            amount = 2.40,
-            dateLabel = "Today · 8:30 AM",
-            isToday = true
-        ),
-        ExpenseItem(
-            id = 3,
-            title = "Groceries",
-            category = "Shopping",
-            amount = 24.99,
-            dateLabel = "Yesterday · 6:15 PM",
-            isToday = false
-        ),
-        ExpenseItem(
-            id = 4,
-            title = "Netflix",
-            category = "Entertainment",
-            amount = 9.99,
-            dateLabel = "2 days ago",
-            isToday = false
-        )
-    )
+// ---------------------------- HELPERS ---------------------------- //
+
+private fun formatDateLabel(date: Date): String {
+    val formatter = SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault())
+    return formatter.format(date)
 }
