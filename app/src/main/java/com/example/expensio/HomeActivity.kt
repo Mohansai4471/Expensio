@@ -57,36 +57,16 @@ class HomeActivity : ComponentActivity() {
                         finish()
                     },
                     onAddExpense = {
-                        // TODO: create AddExpenseActivity and navigate here
-                        Toast.makeText(
-                            this,
-                            "Add Expense screen (coming soon)",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        startActivity(Intent(this, AddExpenseActivity::class.java))
                     },
                     onOpenAnalytics = {
-                        // TODO: create AnalyticsActivity
-                        Toast.makeText(
-                            this,
-                            "Analytics screen (coming soon)",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        startActivity(Intent(this, AnalyticsActivity::class.java))
                     },
                     onOpenHistory = {
-                        // TODO: create HistoryActivity
-                        Toast.makeText(
-                            this,
-                            "History screen (coming soon)",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        startActivity(Intent(this, HistoryActivity::class.java))
                     },
                     onOpenSettings = {
-                        // TODO: create SettingsActivity
-                        Toast.makeText(
-                            this,
-                            "Settings screen (coming soon)",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        startActivity(Intent(this, SettingsActivity::class.java))
                     }
                 )
             }
@@ -174,8 +154,8 @@ fun HomeScreen(
 
     // Totals
     val todayTotal = expenses.filter { it.isToday }.sumOf { it.amount }
-    val weekTotal = expenses.sumOf { it.amount }       // (you can refine to “this week” later)
-    val monthTotal = expenses.sumOf { it.amount } * 2  // demo value – change to real logic later
+    val weekTotal = expenses.sumOf { it.amount }       // TODO: refine to “this week”
+    val monthTotal = expenses.sumOf { it.amount } * 2  // TODO: replace with real month logic
 
     Scaffold(
         topBar = {
