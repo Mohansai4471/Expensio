@@ -29,6 +29,7 @@ import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
 import com.google.firebase.firestore.Query
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 
@@ -96,6 +97,10 @@ fun HomeScreen(
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
+    // Totals (today is derived from expenses, week/month computed in listener)
+    var weekTotal by remember { mutableStateOf(0.0) }
+    var monthTotal by remember { mutableStateOf(0.0) }
+
     val db = remember { FirebaseFirestore.getInstance() }
 
     // Listen to Firestore changes for this user
@@ -119,6 +124,16 @@ fun HomeScreen(
                 }
 
                 if (snapshot != null) {
+                    val now = System.currentTimeMillis()
+                    val weekAgo = now - 7L * 24 * 60 * 60 * 1000 // last 7 days
+
+                    val calendarNow = Calendar.getInstance()
+                    val currentMonth = calendarNow.get(Calendar.MONTH)
+                    val currentYear = calendarNow.get(Calendar.YEAR)
+
+                    var weekTotalTemp = 0.0
+                    var monthTotalTemp = 0.0
+
                     val list = snapshot.documents.mapNotNull { doc ->
                         val title = doc.getString("title") ?: return@mapNotNull null
                         val category = doc.getString("category") ?: "General"
@@ -127,6 +142,19 @@ fun HomeScreen(
                         val date = ts.toDate()
                         val isToday = DateUtils.isToday(date.time)
                         val label = formatDateLabel(date)
+
+                        // Week total: last 7 days
+                        if (date.time >= weekAgo) {
+                            weekTotalTemp += amount
+                        }
+
+                        // Month total: same calendar month + year
+                        val cal = Calendar.getInstance().apply { time = date }
+                        val docMonth = cal.get(Calendar.MONTH)
+                        val docYear = cal.get(Calendar.YEAR)
+                        if (docMonth == currentMonth && docYear == currentYear) {
+                            monthTotalTemp += amount
+                        }
 
                         ExpenseItem(
                             id = doc.id,
@@ -137,11 +165,16 @@ fun HomeScreen(
                             isToday = isToday
                         )
                     }
+
                     expenses = list
+                    weekTotal = weekTotalTemp
+                    monthTotal = monthTotalTemp
                     isLoading = false
                     errorMessage = null
                 } else {
                     expenses = emptyList()
+                    weekTotal = 0.0
+                    monthTotal = 0.0
                     isLoading = false
                 }
             }
@@ -152,10 +185,8 @@ fun HomeScreen(
         }
     }
 
-    // Totals
+    // Today’s total from the mapped list
     val todayTotal = expenses.filter { it.isToday }.sumOf { it.amount }
-    val weekTotal = expenses.sumOf { it.amount }       // TODO: refine to “this week”
-    val monthTotal = expenses.sumOf { it.amount } * 2  // TODO: replace with real month logic
 
     Scaffold(
         topBar = {
