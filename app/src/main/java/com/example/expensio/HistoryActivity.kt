@@ -75,6 +75,7 @@ fun HistoryScreen(
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
     var expenses by remember { mutableStateOf<List<ExpenseItem>>(emptyList()) }
+    var searchQuery by remember { mutableStateOf("") }
 
     // Firestore listener
     DisposableEffect(userId) {
@@ -114,7 +115,7 @@ fun HistoryScreen(
                         category = category,
                         amount = amount,
                         dateLabel = label,
-                        isToday = false // for history we don’t really need this flag
+                        isToday = false // flag not important for history list
                     )
                 }
 
@@ -125,6 +126,17 @@ fun HistoryScreen(
 
             onDispose {
                 registration.remove()
+            }
+        }
+    }
+
+    // Filtered list by search
+    val filteredExpenses = remember(expenses, searchQuery) {
+        if (searchQuery.isBlank()) expenses
+        else {
+            val q = searchQuery.trim().lowercase()
+            expenses.filter {
+                it.title.lowercase().contains(q) || it.category.lowercase().contains(q)
             }
         }
     }
@@ -214,19 +226,55 @@ fun HistoryScreen(
                         )
                         Spacer(Modifier.height(8.dp))
 
+                        OutlinedTextField(
+                            value = searchQuery,
+                            onValueChange = { searchQuery = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("Search by title or category") },
+                            singleLine = true,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = Color.White,
+                                unfocusedContainerColor = Color.White
+                            )
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        Text(
+                            text = "Showing ${filteredExpenses.size} item(s)",
+                            color = Color.White,
+                            fontSize = 12.sp
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
                         Card(
                             colors = CardDefaults.cardColors(containerColor = Color.White),
                             shape = RoundedCornerShape(16.dp),
                             modifier = Modifier.fillMaxSize()
                         ) {
-                            LazyColumn(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(12.dp)
-                            ) {
-                                items(expenses) { expense ->
-                                    HistoryExpenseRow(expense)
-                                    Divider()
+                            if (filteredExpenses.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "No expenses match your search.",
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(12.dp)
+                                ) {
+                                    items(filteredExpenses) { expense ->
+                                        HistoryExpenseRow(expense)
+                                        Divider()
+                                    }
                                 }
                             }
                         }

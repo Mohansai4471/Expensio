@@ -24,11 +24,9 @@ import com.google.firebase.Timestamp
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.firestore.Query
-import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
-import java.util.Locale
+
 
 class AnalyticsActivity : ComponentActivity() {
 
@@ -59,13 +57,29 @@ class AnalyticsActivity : ComponentActivity() {
     }
 }
 
-// ---------------------------- UI LAYER ---------------------------- //
+// ---------------------------- MODELS ---------------------------- //
 
 data class CategorySummary(
     val category: String,
     val totalAmount: Double,
     val transactionCount: Int
 )
+
+data class AnalyticsExpense(
+    val amount: Double,
+    val category: String,
+    val date: Date
+)
+
+enum class AnalyticsRange(val label: String) {
+    TODAY("Today"),
+    LAST_7_DAYS("Last 7 days"),
+    THIS_MONTH("This month"),
+    THIS_YEAR("This year"),
+    ALL_TIME("All time")
+}
+
+// ---------------------------- UI LAYER ---------------------------- //
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,11 +96,11 @@ fun AnalyticsScreen(
     var isLoading by remember { mutableStateOf(true) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
-    var totalSpent by remember { mutableStateOf(0.0) }
-    var monthTotal by remember { mutableStateOf(0.0) }
-    var categorySummaries by remember { mutableStateOf<List<CategorySummary>>(emptyList()) }
+    var allExpenses by remember { mutableStateOf<List<AnalyticsExpense>>(emptyList()) }
 
-    // Firestore listener
+    var selectedRange by remember { mutableStateOf(AnalyticsRange.THIS_MONTH) }
+
+    // Firestore listener – load all expenses once, then filter by range in UI
     DisposableEffect(userId) {
         if (userId == "guest") {
             isLoading = false
@@ -94,8 +108,7 @@ fun AnalyticsScreen(
             onDispose { /* no-op */ }
         } else {
             val query = db.collection("expenses")
-                .whereEqualTo("userId", userId)
-                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .whereEqualTo("userId", userId)   // <- removed orderBy
 
             val registration: ListenerRegistration = query.addSnapshotListener { snapshot, e ->
                 if (e != null) {
@@ -110,51 +123,28 @@ fun AnalyticsScreen(
                     return@addSnapshotListener
                 }
 
-                val categoryMap = mutableMapOf<String, Pair<Double, Int>>()
-                var total = 0.0
-                var monthTotalTemp = 0.0
-
-                val now = Calendar.getInstance()
-                val currentMonth = now.get(Calendar.MONTH)
-                val currentYear = now.get(Calendar.YEAR)
-
-                for (doc in snapshot.documents) {
+                // map with timestamp, then sort by date desc
+                val withTime = snapshot.documents.mapNotNull { doc ->
                     val amount = doc.getDouble("amount") ?: 0.0
                     val category = doc.getString("category") ?: "General"
                     val ts = doc.getTimestamp("timestamp") ?: Timestamp.now()
                     val date = ts.toDate()
 
-                    total += amount
-
-                    // Check if in current month
-                    val cal = Calendar.getInstance().apply { time = date }
-                    val docMonth = cal.get(Calendar.MONTH)
-                    val docYear = cal.get(Calendar.YEAR)
-                    if (docMonth == currentMonth && docYear == currentYear) {
-                        monthTotalTemp += amount
-                    }
-
-                    val existing = categoryMap[category]
-                    if (existing == null) {
-                        categoryMap[category] = amount to 1
-                    } else {
-                        val newTotal = existing.first + amount
-                        val newCount = existing.second + 1
-                        categoryMap[category] = newTotal to newCount
-                    }
+                    Pair(
+                        AnalyticsExpense(
+                            amount = amount,
+                            category = category,
+                            date = date
+                        ),
+                        date.time
+                    )
                 }
 
-                totalSpent = total
-                monthTotal = monthTotalTemp
+                val list = withTime
+                    .sortedByDescending { it.second }   // newest first
+                    .map { it.first }
 
-                categorySummaries = categoryMap.map { (category, pair) ->
-                    CategorySummary(
-                        category = category,
-                        totalAmount = pair.first,
-                        transactionCount = pair.second
-                    )
-                }.sortedByDescending { it.totalAmount }
-
+                allExpenses = list
                 errorMessage = null
                 isLoading = false
             }
@@ -163,6 +153,49 @@ fun AnalyticsScreen(
                 registration.remove()
             }
         }
+    }
+
+    // Derived values based on selected range
+    val filteredExpenses = remember(allExpenses, selectedRange) {
+        filterExpensesByRange(allExpenses, selectedRange)
+    }
+
+    val totalSpent = remember(filteredExpenses) {
+        filteredExpenses.sumOf { it.amount }
+    }
+
+    val monthTotal = remember(filteredExpenses, selectedRange) {
+        // For THIS_MONTH show same as total; for other ranges still useful to show current month
+        if (selectedRange == AnalyticsRange.THIS_MONTH) {
+            totalSpent
+        } else {
+            val calNow = Calendar.getInstance()
+            val currentMonth = calNow.get(Calendar.MONTH)
+            val currentYear = calNow.get(Calendar.YEAR)
+            filteredExpenses.filter { exp ->
+                val c = Calendar.getInstance().apply { time = exp.date }
+                c.get(Calendar.MONTH) == currentMonth && c.get(Calendar.YEAR) == currentYear
+            }.sumOf { it.amount }
+        }
+    }
+
+    val categorySummaries = remember(filteredExpenses) {
+        val categoryMap = mutableMapOf<String, Pair<Double, Int>>()
+        for (exp in filteredExpenses) {
+            val existing = categoryMap[exp.category]
+            if (existing == null) {
+                categoryMap[exp.category] = exp.amount to 1
+            } else {
+                categoryMap[exp.category] = (existing.first + exp.amount) to (existing.second + 1)
+            }
+        }
+        categoryMap.map { (category, pair) ->
+            CategorySummary(
+                category = category,
+                totalAmount = pair.first,
+                transactionCount = pair.second
+            )
+        }.sortedByDescending { it.totalAmount }
     }
 
     Scaffold(
@@ -198,87 +231,133 @@ fun AnalyticsScreen(
                 .padding(innerPadding)
                 .padding(16.dp)
         ) {
-            if (isLoading) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator()
-                        Spacer(Modifier.height(8.dp))
-                        Text("Loading analytics...")
+            when {
+                isLoading -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            CircularProgressIndicator()
+                            Spacer(Modifier.height(8.dp))
+                            Text("Loading analytics...")
+                        }
                     }
                 }
-            } else if (errorMessage != null) {
-                Box(
-                    modifier = Modifier.fillMaxSize(),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = errorMessage ?: "",
-                        color = Color.White,
-                        textAlign = TextAlign.Center
-                    )
+
+                errorMessage != null -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = errorMessage ?: "",
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+                    }
                 }
-            } else {
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    Text(
-                        text = "Spending Overview",
-                        color = Color.White,
-                        fontSize = 20.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(Modifier.height(8.dp))
 
-                    AnalyticsSummaryRow(
-                        totalSpent = totalSpent,
-                        monthTotal = monthTotal
-                    )
+                allExpenses.isEmpty() -> {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = "No expenses to analyse yet.",
+                            color = Color.White,
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
 
-                    Spacer(Modifier.height(16.dp))
-
-                    Text(
-                        text = "By Category",
-                        color = Color.White,
-                        fontSize = 18.sp,
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Spacer(Modifier.height(8.dp))
-
-                    Card(
-                        colors = CardDefaults.cardColors(containerColor = Color.White),
-                        shape = RoundedCornerShape(16.dp),
+                else -> {
+                    Column(
                         modifier = Modifier.fillMaxSize()
                     ) {
-                        if (categorySummaries.isEmpty()) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(24.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                Text(
-                                    text = "No expenses to analyse yet.",
-                                    textAlign = TextAlign.Center
-                                )
-                            }
-                        } else {
-                            LazyColumn(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .padding(12.dp)
-                            ) {
-                                items(categorySummaries) { summary ->
-                                    CategorySummaryRow(summary, totalSpent)
-                                    Divider()
+                        Text(
+                            text = "Spending Overview",
+                            color = Color.White,
+                            fontSize = 20.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(8.dp))
+
+                        // Range selector
+                        AnalyticsRangeSelector(
+                            selectedRange = selectedRange,
+                            onRangeSelected = { selectedRange = it }
+                        )
+
+                        Spacer(Modifier.height(8.dp))
+
+                        AnalyticsSummaryRow(
+                            totalSpent = totalSpent,
+                            monthTotal = monthTotal
+                        )
+
+                        Spacer(Modifier.height(16.dp))
+
+                        Text(
+                            text = "By Category",
+                            color = Color.White,
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.height(8.dp))
+
+                        Card(
+                            colors = CardDefaults.cardColors(containerColor = Color.White),
+                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            if (categorySummaries.isEmpty()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(24.dp),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Text(
+                                        text = "No expenses in this period.",
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            } else {
+                                LazyColumn(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .padding(12.dp)
+                                ) {
+                                    items(categorySummaries) { summary ->
+                                        CategorySummaryRow(summary, totalSpent)
+                                        Divider()
+                                    }
                                 }
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun AnalyticsRangeSelector(
+    selectedRange: AnalyticsRange,
+    onRangeSelected: (AnalyticsRange) -> Unit
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        AnalyticsRange.values().forEach { range ->
+            FilterChip(
+                selected = range == selectedRange,
+                onClick = { onRangeSelected(range) },
+                label = { Text(range.label, fontSize = 11.sp) }
+            )
         }
     }
 }
@@ -293,7 +372,7 @@ private fun AnalyticsSummaryRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         AnalyticsCard(
-            title = "Total Spent",
+            title = "Total (range)",
             amount = totalSpent,
             modifier = Modifier.weight(1f)
         )
@@ -364,5 +443,47 @@ private fun CategorySummaryRow(
                 color = Color.Gray
             )
         }
+    }
+}
+
+// ---------------------------- HELPERS ---------------------------- //
+
+private fun filterExpensesByRange(
+    expenses: List<AnalyticsExpense>,
+    range: AnalyticsRange
+): List<AnalyticsExpense> {
+    if (expenses.isEmpty()) return emptyList()
+
+    val calNow = Calendar.getInstance()
+    val now = calNow.timeInMillis
+
+    return when (range) {
+        AnalyticsRange.TODAY -> {
+            expenses.filter { android.text.format.DateUtils.isToday(it.date.time) }
+        }
+
+        AnalyticsRange.LAST_7_DAYS -> {
+            val sevenDaysAgo = now - 7L * 24 * 60 * 60 * 1000
+            expenses.filter { it.date.time >= sevenDaysAgo }
+        }
+
+        AnalyticsRange.THIS_MONTH -> {
+            val currentMonth = calNow.get(Calendar.MONTH)
+            val currentYear = calNow.get(Calendar.YEAR)
+            expenses.filter {
+                val c = Calendar.getInstance().apply { time = it.date }
+                c.get(Calendar.MONTH) == currentMonth && c.get(Calendar.YEAR) == currentYear
+            }
+        }
+
+        AnalyticsRange.THIS_YEAR -> {
+            val currentYear = calNow.get(Calendar.YEAR)
+            expenses.filter {
+                val c = Calendar.getInstance().apply { time = it.date }
+                c.get(Calendar.YEAR) == currentYear
+            }
+        }
+
+        AnalyticsRange.ALL_TIME -> expenses
     }
 }

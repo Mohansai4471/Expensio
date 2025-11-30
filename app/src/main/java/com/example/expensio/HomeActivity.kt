@@ -113,8 +113,7 @@ fun HomeScreen(
             onDispose { /* nothing */ }
         } else {
             val query = db.collection("expenses")
-                .whereEqualTo("userId", userId)
-                .orderBy("timestamp", Query.Direction.DESCENDING)
+                .whereEqualTo("userId", userId)   // removed orderBy
 
             val registration: ListenerRegistration = query.addSnapshotListener { snapshot, e ->
                 if (e != null) {
@@ -125,7 +124,7 @@ fun HomeScreen(
 
                 if (snapshot != null) {
                     val now = System.currentTimeMillis()
-                    val weekAgo = now - 7L * 24 * 60 * 60 * 1000 // last 7 days
+                    val weekAgo = now - 7L * 24 * 60 * 60 * 1000
 
                     val calendarNow = Calendar.getInstance()
                     val currentMonth = calendarNow.get(Calendar.MONTH)
@@ -134,7 +133,7 @@ fun HomeScreen(
                     var weekTotalTemp = 0.0
                     var monthTotalTemp = 0.0
 
-                    val list = snapshot.documents.mapNotNull { doc ->
+                    val unsorted = snapshot.documents.mapNotNull { doc ->
                         val title = doc.getString("title") ?: return@mapNotNull null
                         val category = doc.getString("category") ?: "General"
                         val amount = doc.getDouble("amount") ?: 0.0
@@ -156,15 +155,24 @@ fun HomeScreen(
                             monthTotalTemp += amount
                         }
 
-                        ExpenseItem(
-                            id = doc.id,
-                            title = title,
-                            category = category,
-                            amount = amount,
-                            dateLabel = label,
-                            isToday = isToday
+                        // keep timestamp alongside the item so we can sort
+                        Pair(
+                            ExpenseItem(
+                                id = doc.id,
+                                title = title,
+                                category = category,
+                                amount = amount,
+                                dateLabel = label,
+                                isToday = isToday
+                            ),
+                            date.time
                         )
                     }
+
+                    // sort newest first
+                    val list = unsorted
+                        .sortedByDescending { it.second }
+                        .map { it.first }
 
                     expenses = list
                     weekTotal = weekTotalTemp
@@ -178,6 +186,7 @@ fun HomeScreen(
                     isLoading = false
                 }
             }
+
 
             onDispose {
                 registration.remove()
@@ -239,12 +248,22 @@ fun HomeScreen(
             Column(
                 modifier = Modifier.fillMaxSize()
             ) {
-                Text(
-                    text = "Today’s Overview",
-                    color = Color.White,
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                // Header + quick link to Analytics
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Today’s Overview",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextButton(onClick = onOpenAnalytics) {
+                        Text("View Analytics", color = Color.White, fontSize = 12.sp)
+                    }
+                }
                 Spacer(Modifier.height(8.dp))
 
                 SummaryRow(
@@ -255,12 +274,22 @@ fun HomeScreen(
 
                 Spacer(Modifier.height(16.dp))
 
-                Text(
-                    text = "Recent Expenses",
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold
-                )
+                // Recent expenses + quick link to full history
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Recent Expenses",
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    TextButton(onClick = onOpenHistory) {
+                        Text("View all", color = Color.White, fontSize = 12.sp)
+                    }
+                }
 
                 Spacer(Modifier.height(8.dp))
 
@@ -317,12 +346,14 @@ fun HomeScreen(
                         }
 
                         else -> {
+                            // Show only the latest few on Home (e.g., top 10)
+                            val recent = expenses.take(10)
                             LazyColumn(
                                 modifier = Modifier
                                     .fillMaxSize()
                                     .padding(12.dp)
                             ) {
-                                items(expenses) { expense ->
+                                items(recent) { expense ->
                                     ExpenseRow(expense)
                                     Divider()
                                 }
@@ -346,7 +377,7 @@ private fun SummaryRow(
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         SummaryCard("Today", todayTotal, Modifier.weight(1f))
-        SummaryCard("This Week", weekTotal, Modifier.weight(1f))
+        SummaryCard("Last 7 Days", weekTotal, Modifier.weight(1f))
         SummaryCard("This Month", monthTotal, Modifier.weight(1f))
     }
 }
